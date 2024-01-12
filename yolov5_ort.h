@@ -1,23 +1,22 @@
-#pragma once
-#include<iostream>
-#include<opencv2/opencv.hpp>
+ï»¿#pragma once
+#ifdef _WIN32
+#include <Windows.h>
+#include <direct.h>
+#include <io.h>
+#endif
+#include <onnxruntime_cxx_api.h>
+#include <fstream>
+#include "utils.h"
 
 
-struct OutputSeg {
-	int id;             //½á¹ûÀà±ğid
-	float confidence;   //½á¹ûÖÃĞÅ¶È
-	cv::Rect box;       //¾ØĞÎ¿ò
-	cv::Mat boxMask;       //¾ØĞÎ¿òÄÚmask£¬½ÚÊ¡ÄÚ´æ¿Õ¼äºÍ¼Ó¿ìËÙ¶È
-};
-
-class YoloSeg {
+class Yolov5_Ort {
 public:
-	YoloSeg() {
+	Yolov5_Ort() {
 	}
-	~YoloSeg() {}
+	~Yolov5_Ort() { delete session; }
 
-	bool ReadModel(cv::dnn::Net& net, std::string& netPath, bool isCuda);
-	bool Detect(cv::Mat& srcImg, const wchar_t* model_path, std::vector<OutputSeg>& output);
+	void LoadModel(std::string& model_path);
+	bool Detect(cv::Mat& srcImg,std::vector<OutputSeg>& output);
 	void DrawPred(cv::Mat& img, std::vector<OutputSeg> result, std::vector<cv::Scalar> color);
 	void LetterBox(const cv::Mat& image, cv::Mat& outImage,
 		cv::Vec4d& params, //[ratio_x,ratio_y,dw,dh]
@@ -27,17 +26,25 @@ public:
 		bool scaleUp = true,
 		int stride = 32,
 		const cv::Scalar& color = cv::Scalar(114, 114, 114));
+
+
 private:
+	Ort::Session* session;
+	Ort::Env env;
+	std::vector<const char*> input_node_names;
+	std::vector<const char*> output_node_names;
+	bool RunSegmentation = false;
 	void GetMask(const int* const _seg_params, const cv::Mat& maskProposals, const cv::Mat& mask_protos, const cv::Vec4d& params, const cv::Size& srcImgShape, std::vector<OutputSeg>& output);
 
-	const int _netWidth = 960;   //ONNXÍ¼Æ¬ÊäÈë¿í¶È
-	const int _netHeight = 640;  //ONNXÍ¼Æ¬ÊäÈë¸ß¶È
+	int _netWidth = 640;   //ONNXå›¾ç‰‡è¾“å…¥å®½åº¦
+	int _netHeight = 640;  //ONNXå›¾ç‰‡è¾“å…¥é«˜åº¦
+	int _clsNum = 80;
 
 	float _classThreshold = 0.5;
 	float _nmsThreshold = 0.45;
 	float _maskThreshold = 0.5;
 
-	//Àà±ğÃû£¬×Ô¼ºµÄÄ£ĞÍĞèÒªĞŞ¸Ä´ËÏî
+	//ç±»åˆ«åï¼Œè‡ªå·±çš„æ¨¡å‹éœ€è¦ä¿®æ”¹æ­¤é¡¹
 	std::vector<std::string> _className = { "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
 		"fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
 		"elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
@@ -47,5 +54,6 @@ private:
 		"potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
 		"microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
 		"hair drier", "toothbrush" };
+
 };
 

@@ -1,46 +1,55 @@
-﻿#include <iostream>
-#include<opencv2//opencv.hpp>
-#include<math.h>
-#include "yolo_seg.h"
-#include<time.h>
-//#include"yolov5.h"
+﻿#include "yolov5_dnn.h"
+#include "yolov5_ort.h"
 
 using namespace std;
 using namespace cv;
 using namespace dnn;
 
-int yolov5_seg()
+void main()
 {
-	string img_path = "./images/zidane.jpg";
-	const wchar_t* model_path = L"yolov5s-seg_d.onnx";
-	YoloSeg test;
+	string img_path = "../img_test/zidane.jpg";
+	string model_path = "../weight_v5/yolov5s-seg_960.onnx";
+	string test_cls = "dnn";
 	//生成随机颜色
 	vector<Scalar> color;
-	srand(time(0));
 	for (int i = 0; i < 80; i++) {
 		int b = rand() % 256;
 		int g = rand() % 256;
 		int r = rand() % 256;
 		color.push_back(Scalar(b, g, r));
 	}
+
 	vector<OutputSeg> result;
 	Mat img = imread(img_path);
-	clock_t t1, t2;
-	if (test.Detect(img, model_path, result)) {
-		test.DrawPred(img, result, color);
+	if (test_cls == "ort") {
+		Yolov5_Ort test;
+		test.LoadModel(model_path);
+		if (test.Detect(img, result)) {
+			test.DrawPred(img, result, color);
+		}
+		else {
+			cout << "Detect Nothing!" << endl;
+		}
 	}
-	else {
-		cout << "Detect Failed!" << endl;
+	
+	if (test_cls == "dnn") {
+		Yolov5_Dnn test;
+		Net net;
+		if (test.ReadModel(net, model_path, true)) {
+			cout << "read net ok!" << endl;
+		}
+		else {
+			cout << "read net failed!" << endl;
+		}
+
+		if (test.Detect(img, net, result)) {
+			test.DrawPred(img, result, color);
+		}
+		else {
+			cout << "Detect Nothing!" << endl;
+		}
 	}
+	
+
 	system("pause");
-	return 0;
 }
-
-
-int main() {
-	//system("chcp 65001");  //终端显示中文
-	yolov5_seg();
-	return 0;
-}
-
-
