@@ -18,13 +18,11 @@ public:
 		bool scaleUp = true,
 		int stride = 32,
 		const cv::Scalar& color = cv::Scalar(114, 114, 114));
-
+	void GetMask(const cv::Mat& maskProposals, const cv::Mat& mask_protos, const cv::Vec4d& params, const cv::Size& srcImgShape, std::vector<OutputSeg>& output);
 
 private:
 	bool RunSegmentation = false;
-	void GetMask(const cv::Mat& maskProposals, const cv::Mat& mask_protos, const cv::Vec4d& params, const cv::Size& srcImgShape, std::vector<OutputSeg>& output);
-
-	const int _netWidth = 960;   //ONNX图片输入宽度
+	const int _netWidth = 640;   //ONNX图片输入宽度
 	const int _netHeight = 640;  //ONNX图片输入高度
 	int _clsNum = 80;
 

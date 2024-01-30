@@ -1,10 +1,11 @@
-﻿#pragma once
+#pragma once
 #ifdef _WIN32
 #include <Windows.h>
 #include <direct.h>
 #include <io.h>
 #endif
 #include <onnxruntime_cxx_api.h>
+#include <cuda_fp16.h>
 #include <fstream>
 #include "utils.h"
 
@@ -16,8 +17,6 @@ public:
 	~Yolov5_Ort() { delete session; }
 
 	void LoadModel(std::string& model_path);
-	bool Detect(cv::Mat& srcImg,std::vector<OutputSeg>& output);
-	void DrawPred(cv::Mat& img, std::vector<OutputSeg> result, std::vector<cv::Scalar> color);
 	void LetterBox(const cv::Mat& image, cv::Mat& outImage,
 		cv::Vec4d& params, //[ratio_x,ratio_y,dw,dh]
 		const cv::Size& newShape = cv::Size(640, 640),
@@ -26,7 +25,11 @@ public:
 		bool scaleUp = true,
 		int stride = 32,
 		const cv::Scalar& color = cv::Scalar(114, 114, 114));
-
+	template<typename N> void BlobFromImage(cv::Mat& iImg, N& iBlob);
+	bool Detect(cv::Mat& srcImg, std::vector<OutputSeg>& output);
+	template<typename N> void RunSession(cv::Mat& SrcImg, cv::Mat& netInputImg, cv::Vec4d& params, N* blob,  std::vector<OutputSeg>& output);
+	void GetMask(const int* const _seg_params, const cv::Mat& maskProposals, const cv::Mat& mask_protos, const cv::Vec4d& params, const cv::Size& srcImgShape, std::vector<OutputSeg>& output);
+	void DrawPred(cv::Mat& img, std::vector<OutputSeg> result, std::vector<cv::Scalar> color);
 
 private:
 	Ort::Session* session;
@@ -34,7 +37,7 @@ private:
 	std::vector<const char*> input_node_names;
 	std::vector<const char*> output_node_names;
 	bool RunSegmentation = false;
-	void GetMask(const int* const _seg_params, const cv::Mat& maskProposals, const cv::Mat& mask_protos, const cv::Vec4d& params, const cv::Size& srcImgShape, std::vector<OutputSeg>& output);
+	bool RunFP16 = false;
 
 	int _netWidth = 640;   //ONNX图片输入宽度
 	int _netHeight = 640;  //ONNX图片输入高度

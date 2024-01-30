@@ -8,8 +8,8 @@ using namespace dnn;
 void main()
 {
 	string img_path = "../img_test/zidane.jpg";
-	string model_path = "../weight_v5/yolov5s-seg_960.onnx";
-	string test_cls = "dnn";
+	string model_path = "../weight_v5/yolov5s-seg_1920_960.onnx";
+	string test_cls = "ort";
 	//生成随机颜色
 	vector<Scalar> color;
 	for (int i = 0; i < 80; i++) {

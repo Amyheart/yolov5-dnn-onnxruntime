@@ -7,6 +7,12 @@ using namespace cv;
 using namespace cv::dnn;
 using namespace Ort;
 
+namespace Ort
+{
+	template<>
+	struct TypeToTensorType<half> { static constexpr ONNXTensorElementDataType type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16; };
+}
+
 void Yolov5_Ort::LoadModel(string& model_path) {
 #ifdef _WIN32
 	int ModelPathSize = MultiByteToWideChar(CP_UTF8, 0, model_path.c_str(), static_cast<int>(model_path.length()), nullptr, 0);
@@ -32,11 +38,8 @@ void Yolov5_Ort::LoadModel(string& model_path) {
 
 	// print model input layer (node names, types, shape etc.)
 	Ort::AllocatorWithDefaultOptions allocator;
-	//model info
-	// 获得模型又多少个输入和输出，一般是指对应网络层的数目
-	// 一般输入只有图像的话input_nodes为1
+	//获取模型信息
 	size_t num_input_nodes = session->GetInputCount();
-	// 如果是多输出网络，就会是对应输出的数目
 	size_t num_output_nodes = session->GetOutputCount();
 	printf("Number of inputs = %zu\n", num_input_nodes);
 	printf("Number of output = %zu\n", num_output_nodes);
@@ -70,7 +73,16 @@ void Yolov5_Ort::LoadModel(string& model_path) {
 	std::cout << "output_dims:";
 	for (int i = 0; i < output_dims.size(); i++) std::cout << output_dims[i] << " ";
 	std::cout << std::endl;
-
+	// 自动获取输入数据精度
+	auto input_type = session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetElementType();
+	if (input_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+		this->RunFP16 = true;
+		std::cout << "input_type:FP16" << endl;
+	}
+	if (input_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+		this->RunFP16 = false;
+		std::cout << "input_type:FP32" << endl;
+	}
 	//自动获取模型names
 	auto meta_names = session->GetModelMetadata().LookupCustomMetadataMapAllocated("names", allocator);
 	string names_str = meta_names.get();
@@ -144,25 +156,58 @@ void Yolov5_Ort::LetterBox(const cv::Mat& image, cv::Mat& outImage, cv::Vec4d& p
 }
 
 
+template<typename N>
+void Yolov5_Ort::BlobFromImage(cv::Mat& iImg, N& iBlob) {
+	int channels = iImg.channels();
+	int imgHeight = iImg.rows;
+	int imgWidth = iImg.cols;
+	for (int c = 0; c < channels; c++) {
+		for (int h = 0; h < imgHeight; h++) {
+			for (int w = 0; w < imgWidth; w++) {
+				iBlob[c * imgWidth * imgHeight + h * imgWidth + w] = typename std::remove_pointer<N>::type(
+					(iImg.at<cv::Vec3b>(h, w)[c]) / 255.0f);
+			}
+		}
+	}
+}
+
 bool Yolov5_Ort::Detect(Mat& SrcImg, vector<OutputSeg>& output) {
 	output.clear();
-	Mat blob;
 	Mat netInputImg;
 	Vec4d params;
 	LetterBox(SrcImg, netInputImg, params, cv::Size(_netWidth, _netHeight));
-	//blobFromImage对图像进行预处理，包括减均值，比例缩放，裁剪，交换通道等
-	blobFromImage(netInputImg, blob, 1 / 255.0, cv::Size(_netWidth, _netHeight), cv::Scalar(0, 0, 0), true, false);
+	//blobFromImage对图像进行预处理，包括减均值，比例缩放，裁剪，交换通道等,这里只能生成float类型的归一化数据，所以重写BlobFromImage
+	// Mat blob;
+	//blobFromImage(netInputImg, blob, 1 / 255.0, cv::Size(_netWidth, _netHeight), cv::Scalar(0, 0, 0), true, false);
 	//blobFromImage是利用dnn对图片做预处理，如果在其他设置没有问题的情况下但是结果偏差很大，可以尝试下用下面两句语句；也可以另外重写预处理函数；
 	//blobFromImage(netInputImg, blob, 1 / 255.0, cv::Size(_netWidth, _netHeight), cv::Scalar(104, 117, 123), true, false);
 	//blobFromImage(netInputImg, blob, 1 / 255.0, cv::Size(_netWidth, _netHeight), cv::Scalar(114, 114,114), true, false);
-	
+	if (RunFP16) {
+		half* blob = new half[netInputImg.total() * 3];
+		BlobFromImage(netInputImg,blob);
+		RunSession(SrcImg, netInputImg, params, blob, output);
+		delete[] blob;
+	}
+	else {
+		float* blob = new float[netInputImg.total() * 3];
+		BlobFromImage(netInputImg, blob);
+		RunSession(SrcImg, netInputImg, params, blob, output);
+		delete[] blob;
+	}
+	if (output.size())
+		return true;
+	else
+		return false;
+}
+
+template<typename N>
+void Yolov5_Ort::RunSession(cv::Mat& SrcImg, cv::Mat& netInputImg, cv::Vec4d& params, N* blob, std::vector<OutputSeg>& output){
 	// 当onnx模型是动态输入时，input_dims输入变量的维度默认值是-1，需要给出具体数值
 	auto allocator_info = MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
-	std::vector<int64_t> input_dims={1, 3, _netHeight, _netWidth };
-	Value input_tensor = Value::CreateTensor<float>(allocator_info, blob.ptr<float>(), blob.total(), input_dims.data(), input_dims.size());
-	//推理(score model & input tensor, get back output tensor)
-	vector<Value> ort_outputs = session->Run(RunOptions{ nullptr }, input_node_names.data(), &input_tensor, 1, output_node_names.data(), output_node_names.size());
-
+	std::vector<int64_t> input_dims = { 1, 3, _netHeight, _netWidth };
+	Ort::Value input_tensor = Ort::Value::CreateTensor<typename std::remove_pointer<N>::type>(allocator_info, blob, 3* _netWidth * _netHeight, input_dims.data(), input_dims.size());
+	//推理
+	auto ort_outputs = session->Run(RunOptions{ nullptr }, input_node_names.data(), &input_tensor, 1, output_node_names.data(), output_node_names.size());
 	std::vector<int> classIds;//结果id数组
 	std::vector<float> confidences;//结果每个id对应置信度数组
 	std::vector<cv::Rect> boxes;//每个id矩形框
@@ -170,20 +215,22 @@ bool Yolov5_Ort::Detect(Mat& SrcImg, vector<OutputSeg>& output) {
 
 	float ratio_h = (float)netInputImg.rows / _netHeight;
 	float ratio_w = (float)netInputImg.cols / _netWidth;
-	float* pdata = ort_outputs[0].GetTensorMutableData<float>();
+	N* pdata = ort_outputs[0].GetTensorMutableData<N>();
 
 	std::vector<int64_t> _outputTensorShape;
 	_outputTensorShape = ort_outputs[0].GetTensorTypeAndShapeInfo().GetShape();
 	int net_width = _outputTensorShape[2];
 	int net_height = _outputTensorShape[1];
 	for (int r = 0; r < net_height; ++r) {
-		float box_score = pdata[4]; ;//获取每一行的box框中含有某个物体的概率
+		N box_score = pdata[4]; ;//获取每一行的box框中含有某个物体的概率
 		if (box_score >= _classThreshold) {
-			cv::Mat scores(1, _clsNum, CV_32FC1, pdata + 5);
+			cv::Mat scores;
+			if(RunFP16) scores=cv::Mat(1, _clsNum,CV_16S, pdata + 5);
+			else scores = cv::Mat(1, _clsNum, CV_32FC1, pdata + 5);
 			Point classIdPoint;
 			double max_class_socre;
 			minMaxLoc(scores, 0, &max_class_socre, 0, &classIdPoint);
-			max_class_socre = max_class_socre * box_score;
+			max_class_socre = *(pdata + 5 + classIdPoint.x) * box_score;
 			if (max_class_socre >= _classThreshold) {
 				vector<float> temp_proto(pdata + 5 + _clsNum, pdata + net_width);
 				picked_proposals.push_back(temp_proto);
@@ -227,18 +274,12 @@ bool Yolov5_Ort::Detect(Mat& SrcImg, vector<OutputSeg>& output) {
 		int _segChannels = _outputMaskTensorShape[1];
 		int _segHeight = _outputMaskTensorShape[2];
 		int _segWidth = _outputMaskTensorShape[3];
-		float* pdata1 = ort_outputs[1].GetTensorMutableData<float>();
+		N* pdata1 = ort_outputs[1].GetTensorMutableData<N>();
 		std::vector<float> mask(pdata1, pdata1 + _segChannels * _segWidth * _segHeight);
-
 		int _seg_params[3] = { _segChannels,  _segHeight,_segWidth };
 		Mat mask_protos = Mat(mask);
 		GetMask(_seg_params, mask_proposals, mask_protos, params, SrcImg.size(), output);
 	}
-	
-	if (output.size())
-		return true;
-	else
-		return false;
 }
 
 void Yolov5_Ort::GetMask(const int* const _seg_params, const Mat& maskProposals, const Mat& mask_protos, const cv::Vec4d& params, const cv::Size& srcImgShape, vector<OutputSeg>& output) {
@@ -290,5 +331,4 @@ void Yolov5_Ort::DrawPred(Mat& img, vector<OutputSeg> result, vector<Scalar> col
 	imwrite("out.bmp", img);
 	waitKey();
 	destroyWindow("1");
-	
 }
